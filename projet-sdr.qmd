@@ -1,0 +1,102 @@
+---
+title: "Projet SDR"
+format:
+  html:
+    code-tools:
+      source: repo
+---
+
+## Import des données
+
+```{r}
+library(readr)
+usagers_2022 <- read_delim("data/usagers-2022.csv", delim = ";", escape_double = FALSE, na = "NA", trim_ws = TRUE)
+lieux_2022 <- read_delim("data/lieux-2022.csv", delim = ";", escape_double = FALSE, na = "NA", trim_ws = TRUE)
+vehicules_2022 <- read_delim("data/vehicules-2022.csv", delim = ";", escape_double = FALSE, na = "NA", trim_ws = TRUE)
+caracteristiques_2022 <- read_delim("data/carcteristiques-2022.csv", delim = ";", escape_double = FALSE, na = "NA", trim_ws = TRUE)
+```
+
+# 1. Preprocessing
+
+Chargement des packages
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(skimr)
+library(janitor)
+library(naniar)
+library(readr)
+```
+
+## Aperçu global du jeu de données
+
+```{r}
+
+# Résumé de la base de données caracteristiques
+skim(caracteristiques_2022)
+
+
+```
+```{r}
+# Résumé de la base de données usagers
+skim(usagers_2022)
+
+```
+
+```{r}
+
+skim(vehicules_2022)
+
+```
+
+```{r}
+
+skim(lieux_2022)
+```
+
+
+On va se limiter aux données concernant la france métropolitaine. Cela correspond au
+
+```{r}
+caracteristiques_metropole<- caracteristiques_2022 |>
+  filter
+
+```
+
+Intéressons-nous aux nombre d'accidents au fur et à mesure de l'année 2022
+
+```{r}
+caracteristiques_2022 |>
+  group_by(an, mois, jour) |>
+  summarize(
+    nombre_accidents = n(), 
+    .groups = "drop"
+  ) |>
+  unite("date",an, mois, jour, sep = "-") |>
+  mutate(date = as.Date(date)) |>
+  ggplot() + geom_line(mapping= aes(x=date, y=nombre_accidents)) + geom_smooth(aes(x=date, y=nombre_accidents))
+```
+On remarque que le nombre d'accidents est plus élevé en été que durant le reste de l'année
+
+```{r}
+caracteristiques_2022 |>
+  group_by(an,mois, jour) |>
+  summarize(
+    nombre_accidents = n(), 
+    .groups = "drop"
+  ) |>
+  mutate(
+    moyenne_accident_jour = sum(nombre_accidents) / 365, # Calcul de la moyenne une seule fois après l'agrégation
+    taux_augmentation = 100*nombre_accidents / moyenne_accident_jour
+  ) |>
+  #filter(mois == ")
+  unite("date",an, mois, jour, sep = "-") |>
+  mutate(date = as.Date(date)) |>
+  ggplot() + geom_line(mapping= aes(x=date, y=taux_augmentation)) + geom_smooth(aes(x=date, y=taux_augmentation))
+```
+
+```{r}
+usagers_2022 <- 
+```
+
