@@ -13,7 +13,7 @@ library(readr)
 usagers_2022 <- read_delim("data/usagers-2022.csv", delim = ";", escape_double = FALSE, na = "NA", trim_ws = TRUE)
 lieux_2022 <- read_delim("data/lieux-2022.csv", delim = ";", escape_double = FALSE, na = "NA", trim_ws = TRUE)
 vehicules_2022 <- read_delim("data/vehicules-2022.csv", delim = ";", escape_double = FALSE, na = "NA", trim_ws = TRUE)
-caracteristiques_2022 <- read_delim("data/carcteristiques-2022.csv", delim = ";", escape_double = FALSE, na = "NA", trim_ws = TRUE)
+caracteristiques_2022 <- read_delim("data/carcteristiques-2022.csv", delim = ";", col_types = cols(long = col_number()), escape_double = FALSE, na = "NA", trim_ws = TRUE)
 ```
 
 # 1. Preprocessing
@@ -60,7 +60,7 @@ On va se limiter aux données concernant la france métropolitaine. Cela corresp
 
 ```{r}
 caracteristiques_metropole<- caracteristiques_2022 |>
-  filter
+  filter(lat >= 41.0 & lat <= 51.1 & long >= -5.142 & long <= 9.559)
 
 ```
 
@@ -95,8 +95,61 @@ caracteristiques_2022 |>
   mutate(date = as.Date(date)) |>
   ggplot() + geom_line(mapping= aes(x=date, y=taux_augmentation)) + geom_smooth(aes(x=date, y=taux_augmentation))
 ```
-
+Regardons maintenant la gravité de ces accidents en fonction de la luminosité de la rue à ce moment là :
 ```{r}
-usagers_2022 <- 
+accidents_data_plot <- caracteristiques_2022 |>
+  left_join(usagers_2022, by=c("Accident_Id"="Num_Acc")) |>
+  left_join(vehicules_2022, by=c("Accident_Id"="Num_Acc")) |>
+  filter(col==1 & motor %in% c(1,2,3)) |>
+  group_by(an, mois, jour, secu1, grav) |>
+  summarize(
+    nombre_accidents = n(),
+    grav = grav,
+    secu1=secu1,
+    .groups = "drop"
+  ) |>
+  distinct() |>
+  unite("date", an, mois, jour, sep = "-") |>
+  drop_na(date) |>  # Supprime les lignes où la date est NA
+  mutate(date = as.Date(date)) |>
+  filter(secu1 != -1 & grav != -1) |>
+  mutate(lum = factor(secu1)) |>
+  mutate(grav = factor(grav)) # Convertit grav en facteur
+
+ggplot(accidents_data_plot, aes(x=date, y=nombre_accidents, color=grav)) + geom_line() + facet_wrap(~secu1)
+```
+rue à ce moment là :
+```{r}
+# Par exemple, visualiser la distribution de "col" en fonction de la gravité de l'accident
+
+data_dist <- caracteristiques_2022 |>
+  left_join(usagers_2022, by=c("Accident_Id"="Num_Acc"))
+
+ggplot(data_dist, aes(x = factor(col), fill = factor(grav))) +
+  geom_bar() +
+  labs(title = "Distribution de la gravité en fonction du code 'col'")
+```
+# Impact de l'équipement dans les accidents de deux-roues motorisé :
+```{r}
+data <- caracteristiques_2022 |>
+  left_join(usagers_2022, by=c("Accident_Id"="Num_Acc")) |>
+  left_join(vehicules_2022, by=c("Accident_Id"="Num_Acc")) |>
+  filter(catv<35 & catv>=30 & catu==1)
+
+data_equip <- data %>%
+  mutate(equipement = case_when(
+    secu1 == 0 & secu2 == 0 ~ 0,
+    (secu1 == 2 & secu2 == 0) | (secu1 == 0 & secu2 == 2) ~ 1,
+    (secu1 == 2 & secu2 == 6) | (secu1 == 6 & secu2 == 2) ~ 2,
+    TRUE ~ NA_real_  # Mettre NA pour les autres cas
+  )) %>%
+  filter(!is.na(equipement)) %>%  # Supprimer les lignes avec NA dans 'equipement'
+  select(-secu1, -secu2)  # Supprimer les colonnes 'secu1' et 'secu2'
+
+# Visualiser la distribution de la gravité en fonction de l'équipement
+ggplot(data_equip, aes(x = factor(equipement), fill = factor(grav))) +
+  geom_bar() +
+  labs(title = "Distribution de la gravité en fonction de l'équipement")
 ```
 
+On ne voit pas d'incidence claire de l'équipement sur les données. C'est nottament parce que les gants sont obligatoires en France pour les conducteurs de deux-roues motorisés. On peut donc supposer que la plupart des conducteurs portent des gants. Utilisons pour comparer des données de 2006 : 

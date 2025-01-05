@@ -1,10 +1,12 @@
 ---
-title: "Dashboard - Accidents de la Route"
+title: "Dashboard - Accidents corporels en deux-roues motorisé"
 format: dashboard
 server: shiny
 ---
 
-```{r setup, include=FALSE}
+```{r}
+#| context: setup
+
 # Charger les bibliothèques nécessaires
 library(shiny)
 library(ggplot2)
@@ -12,80 +14,211 @@ library(dplyr)
 library(tidyr)
 library(plotly)
 library(readr)
-```
+library(ggplot2)
+library(leaflet)
 
-Importer et préparer les données
-```{r}
-caracteristiques_2022 <- read_delim("data/carcteristiques-2022.csv", delim = ";", escape_double = FALSE, na = "NA", trim_ws = TRUE)
+# Importer et préparer les données
+caracteristiques_2022 <- read_delim("data/carcteristiques-2022.csv", delim = ";", col_types = cols(long = col_number()), escape_double = FALSE, na = "NA", trim_ws = TRUE)
 
 usagers_2022 <- read_delim("data/usagers-2022.csv", delim = ";", escape_double = FALSE, na = "NA", trim_ws = TRUE)
 
-caracteristiques_2022
-usagers_2022
+vehicules_2022 <- read_delim("data/vehicules-2022.csv", delim = ";", escape_double = FALSE, na = "NA", trim_ws = TRUE)
 
-```
+# Préparer les données 
 
-Préparer les données
-```{r}
 accidents_data <- caracteristiques_2022 |>
   left_join(usagers_2022, by=c("Accident_Id"="Num_Acc")) |>
-  group_by(an, mois, jour) |>
+  left_join(vehicules_2022, by=c("Accident_Id"="Num_Acc")) |>
+  filter(catv<35 & catv>=30 & catu==1) |>
+  unite("date", an, mois, jour, sep = "-") |>
+  mutate(date = as.Date(date)) |>
+  drop_na(date) |>  # Supprime les lignes où la date est NA
+  filter(lum != -1 & grav != -1) |>  # Supprime les lignes où lum ou grav est -1
+  mutate(grav = case_when(
+    grav == 1 ~ 1,
+    grav == 2 ~ 4,
+    grav == 3 ~ 3,
+    grav == 4 ~ 2,
+  )) |>
+  mutate(lum = factor(lum)) |>
+  mutate(grav = factor(grav)) |> # Convertit grav en facteur
+  mutate(lat = as.numeric(lat/10000000000),
+         long = as.numeric(long/10000000000)) |># Convertit lat et lon en numérique
+  mutate(equipement = case_when(
+    secu1 == 0 & secu2 == 0 ~ 0,
+    (secu1 == 2 & secu2 == 0) | (secu1 == 0 & secu2 == 2) ~ 1,
+    (secu1 == 2 & secu2 == 6) | (secu1 == 6 & secu2 == 2) ~ 2,
+    TRUE ~ NA_real_  # Mettre NA pour les autres cas
+  )) %>%
+  filter(!is.na(equipement)) %>%  # Supprimer les lignes avec NA dans 'equipement'
+  filter( lat >= 41.0 & lat <= 51.5,
+    long >= -5.0 & long <= 9.5) |> #On se limite à la France métropolitaine
+  select(-secu1, -secu2)  # Supprimer les colonnes 'secu1' et 'secu2'
+
+accidents_data_plot <- accidents_data |>
+  group_by(date, lum, grav) |>
   summarize(
     nombre_accidents = n(),
     grav = grav,
+    lum=lum,
+    equipement=equipement,
     .groups = "drop"
   ) |>
-  unite("date", an, mois, jour, sep = "-") |>
-  mutate(date = as.Date(date))
+  distinct()
 
-accidents_data
+accidents_data_hist <- accidents_data |>
+  summarize(
+    Accident_Id = Accident_Id,
+    grav = grav,
+    lum=lum,
+    date=date,
+    equipement = equipement,
+    .groups = "drop"
+  ) |>
+  distinct()
+
+accidents_data_map <- accidents_data |>
+  summarize(
+    Accident_Id = Accident_Id,
+    grav = grav,
+    lum=lum,
+    date=date,
+    lat=lat,
+    long=long,
+    equipement = equipement,
+    .groups = "drop"
+  ) |>
+  distinct()
+
+palette_grav = c("1"="green","2"="yellow","3"="orange", "4"="red")  # Couleurs pour chaque catégorie
+
+
 ```
-# {.sidebar}
+
+#  {.sidebar}
+
 ```{r}
-      checkboxGroupInput("gravite", "Gravité des accidents", 
-                         choices = c("Décès" = "mort", 
-                                     "Blessé grave" = "blessé_grave", 
-                                     "Blessé léger" = "blessé_léger"), 
-                         selected = c("mort", "blessé_grave"))
+checkboxGroupInput("gravite", "Gravité des accidents", 
+                   choices = c("1 - Indemne"="1", "2 - Blessé léger"="2", "3 - Blessé hospitalisé"="3", "4 - Tué"="4"),
+                   selected = unique(accidents_data_plot$grav))
+checkboxGroupInput("lum", "Luminosité lors de l'accident", 
+                   choices = c("1 - Plein jour"="1", "2 - Crépuscule ou aube"="2", "3 - Nuit sans éclairage public"="3", "4 - Nuit avec éclairage public non allumé"="4", "5 - Nuit avec éclairage public allumé"="5"), 
+                   selected = unique(accidents_data_plot$lum))
+checkboxGroupInput("equipement", "Equipement du conducteur", 
+                   choices = c("0 - Sans équipement"= "0","1 - Avec casque"="1", "2 - Avec casque et gants" = "2"), 
+                   selected = c("0", "1", "2"))
+dateRangeInput("date", "Période", start = min(accidents_data_plot$date), end = max(accidents_data_plot$date))
 ```
 
 # Plot
+
 ```{r}
-plotOutput('plot')
+plotlyOutput('plot')
 ```
 
+# Histogramme
+
+```{r}
+plotlyOutput('hist')
+```
+
+# Carte
+
+```{r}
+leafletOutput('map')
+```
 
 ```{r}
 #| context: server
   
-  filtered_data <- reactive({
-    # Filtrer les données en fonction des types d'accidents sélectionnés
-    gravite_selected <- input$gravite
-    
-    # Exemple pour filtrer les données sur la gravité des accidents (modifie selon ta colonne)
-    data_filtered <- caracteristiques_2022 |>
-      left_join(usagers_2022, by=c("Accident_Id"="Num_Acc")) |>
-      filter(grav %in% gravite_selected) |>
-      group_by(an, mois, jour) |>
-      summarize(
-        nombre_accidents = n(),
-        .groups = "drop"
-      ) |>
-      unite("date", an, mois, jour, sep = "-") |>
-      mutate(date = as.Date(date))
-    
-    return(data_filtered)
-  })
-  
-  output$plot <- renderPlotly({
-    # Générer le graphique
-    ggplot(data = filtered_data()) +
-      geom_line(mapping = aes(x = date, y = nombre_accidents)) +
-      geom_smooth(aes(x = date, y = nombre_accidents)) +
-      ggtitle("Nombre d'Accidents en 2022") +
-      theme_minimal() |>
-      ggplotly()
+  filtered_data_plot <- reactive({
+    data_filtered_plot <- accidents_data_plot |>
+      filter(grav %in% input$gravite) |>
+      filter(lum %in% input$lum) |>
+      filter(date >= input$date[1] & date <= input$date[2]) |>
+      filter(equipement %in% input$equipement)
   })
 
+  filtered_data_hist <- reactive({
+    data_filtered_hist <- accidents_data_hist |>
+      filter(grav %in% input$gravite) |>
+      filter(lum %in% input$lum) |>
+      filter(date >= input$date[1] & date <= input$date[2]) |>
+      filter(equipement %in% input$equipement)
+
+  })
+  
+  filtered_data_map <- reactive({
+    data_filtered <- accidents_data_map |>
+      filter(grav %in% input$gravite) |>
+      filter(lum %in% input$lum) |>
+      filter(date >= input$date[1] & date <= input$date[2]) |>
+      filter(equipement %in% input$equipement)
+  })
+  
+  pal <- colorFactor(
+    palette = c("green", "yellow","orange", "red"),  # Couleurs pour chaque catégorie
+    domain = accidents_data_map$grav
+  )
+
+  
+output$plot <- renderPlotly({
+  data <- filtered_data_plot()
+  if (nrow(data) == 0) {
+    return(NULL)  # Si aucune donnée, ne retourne rien
+  }
+  p <- ggplot(data, aes(x = date, y = nombre_accidents, color=grav)) + geom_line() +  scale_color_manual(values=c("1" = "green", "2"="yellow","3" = "orange", "4" = "red")) + facet_wrap(facets = vars(lum)) +
+    labs(
+      title = "Nombre d'Accidents en 2022",
+      x = "Date",
+      y = "Nombre d'accidents"
+    ) +
+    theme_minimal()
+  ggplotly(p, dynamicTicks = FALSE)  # Désactive les ticks dynamiques
+})
+
+output$hist <- renderPlotly({
+  data <- filtered_data_hist()
+  if (nrow(data) == 0) {
+    return(NULL)  # Si aucune donnée, ne retourne rien
+  }
+  p <- ggplot(data, aes(x = lum, fill = grav)) + 
+  geom_bar(position = "dodge") + scale_fill_manual(values=c("1" = "green", "2"="yellow","3" = "orange", "4" = "red")) + # "dodge" pour placer les barres côte à côte
+  labs(
+    title = "Gravité des Accidents en Fonction de la luminosité",
+    x = "luminosité",
+    y = "Nombre d'Accidents",
+    fill = "Gravité"  # Légende pour la couleur de remplissage
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotation des étiquettes x si nécessaire
+  
+  ggplotly(p, dynamicTicks = FALSE)  # Désactive les ticks dynamiques
+})
+
+output$map <- renderLeaflet({
+  data <- filtered_data_map()
+  if (nrow(data) == 0) {
+    return(NULL)  # Si aucune donnée, ne retourne rien
+  }
+  # Créer la carte interactive
+p <- leaflet(data = data) %>%
+  addTiles() %>%  # Ajoute un fond de carte
+  addCircleMarkers(
+    ~long, ~lat,  # Coordonnées
+    color = ~pal(grav),     # Couleur en fonction de 'grav'
+    radius = 8,             # Taille des cercles
+    fillOpacity = 0.8,      # Opacité
+    popup = ~paste("Gravité:", grav)  # Info-bulle
+  ) |>
+  addLegend(
+    position = "bottomright",  # Position de la légende
+    pal = pal,  # Palette de couleurs
+    values = ~grav,  # Valeurs à afficher
+    title = "Gravité"  # Titre de la légende
+  )
+  
+p
+})
 
 ```
