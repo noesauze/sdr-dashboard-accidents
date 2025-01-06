@@ -6,40 +6,73 @@ format:
       source: repo
 ---
 
-## Import des données
+# Introduction
+
+Le projet SDR vise à analyser et comprendre les accidents de la route en France en 2022 à partir des données publiques fournies par le gouvernement français. L'objectif principal est d'identifier les tendances et les facteurs contribuant aux accidents, afin de fournir des insights utiles pour améliorer la sécurité routière.
+
+Les données utilisées dans ce projet incluent :
+
+-   **Usagers** : Informations sur les individus impliqués dans les accidents.
+
+-   **Lieux** : Localisation géographique des accidents.
+
+-   **Véhicules** : Détails sur les véhicules impliqués.
+
+-   **Caractéristiques** : Informations contextuelles (date, heure, luminosité, etc.).
+
+Le projet est structuré comme suit :
+
+1\. **Chargement et Prétraitement des Données** : Nettoyage et préparation des données pour l'analyse.
+
+2\. **Analyse Exploratoire** : Visualisation des tendances et exploration des relations entre les variables.
+
+3\. **Études Approfondies** : Analyse de la gravité des accidents, des facteurs environnementaux, et des comportements des usagers.
+
+4\. **Conclusion** : Résumé des observations clés et recommandations.
+
+# 1. Chargement et prétaitement des données
+
+### Importation des données
 
 ```{r}
 library(readr)
-usagers_2022 <- read_delim("data/usagers-2022.csv", delim = ";", escape_double = FALSE, na = "NA", trim_ws = TRUE)
-lieux_2022 <- read_delim("data/lieux-2022.csv", delim = ";", escape_double = FALSE, na = "NA", trim_ws = TRUE)
-vehicules_2022 <- read_delim("data/vehicules-2022.csv", delim = ";", escape_double = FALSE, na = "NA", trim_ws = TRUE)
-caracteristiques_2022 <- read_delim("data/carcteristiques-2022.csv", delim = ";", col_types = cols(long = col_number()), escape_double = FALSE, na = "NA", trim_ws = TRUE)
+usagers_2022 <- read_delim("data/usagers-2022.csv", delim = ";", escape_double = FALSE, na = "NA", trim_ws = TRUE,show_col_types = FALSE)
+lieux_2022 <- read_delim("data/lieux-2022.csv", delim = ";", escape_double = FALSE, na = "NA", trim_ws = TRUE,show_col_types = FALSE)
+vehicules_2022 <- read_delim("data/vehicules-2022.csv", delim = ";", escape_double = FALSE, na = "NA", trim_ws = TRUE,show_col_types = FALSE)
+caracteristiques_2022 <- read_delim("data/carcteristiques-2022.csv", delim = ";", col_types = cols(long = col_number()), escape_double = FALSE, na = "NA", trim_ws = TRUE, show_col_types = FALSE)
 ```
 
-# 1. Preprocessing
-
-Chargement des packages
+### Importation des packages
 
 ```{r}
 library(dplyr)
-library(tidyr)
+library(tidyverse)
 library(skimr)
 library(janitor)
 library(naniar)
 library(readr)
 ```
 
-## Aperçu global du jeu de données
+### Visualisation des données manquantes
+
+```{r}
+naniar::vis_miss(lieux_2022,warn_large_data = FALSE)
+naniar::vis_miss(vehicules_2022,warn_large_data = FALSE)
+naniar::vis_miss(usagers_2022,warn_large_data = FALSE)
+naniar::vis_miss(caracteristiques_2022,warn_large_data = FALSE)
+```
+
+### Aperçu global du jeu de données
 
 ```{r}
 
-# Résumé de la base de données caracteristiques
 skim(caracteristiques_2022)
 
 
 ```
+
 ```{r}
-# Résumé de la base de données usagers
+
 skim(usagers_2022)
 
 ```
@@ -55,29 +88,63 @@ skim(vehicules_2022)
 skim(lieux_2022)
 ```
 
+On va traiter les données longitudes et lattitudes pour qu'elles soient exprimées dans la bonne unité.
 
-On va se limiter aux données concernant la france métropolitaine. Cela correspond au
+On va se limiter aux données concernant la France métropolitaine. Cela correspond aux latitudes comprises entre 41 et 51.1 et longitudes comprises entre -5.142 et 9.559.
 
 ```{r}
+#Filtrage des données pour la France métropolitaine
 caracteristiques_metropole<- caracteristiques_2022 |>
+  mutate(lat = as.numeric(lat/10000000000),
+         long = as.numeric(long/10000000000)) |># Convertit lat et lon en numérique
   filter(lat >= 41.0 & lat <= 51.1 & long >= -5.142 & long <= 9.559)
 
 ```
 
-Intéressons-nous aux nombre d'accidents au fur et à mesure de l'année 2022
+## 2. Analyse exploratoire
+
+On s'interésse dans un premier temps à la répartition des accidents selon leur gravité
 
 ```{r}
-caracteristiques_2022 |>
-  group_by(an, mois, jour) |>
-  summarize(
-    nombre_accidents = n(), 
-    .groups = "drop"
-  ) |>
-  unite("date",an, mois, jour, sep = "-") |>
-  mutate(date = as.Date(date)) |>
-  ggplot() + geom_line(mapping= aes(x=date, y=nombre_accidents)) + geom_smooth(aes(x=date, y=nombre_accidents))
+
+accidents <- caracteristiques_metropole |>
+  left_join(usagers_2022, by=c("Accident_Id"="Num_Acc")) |>
+  left_join(vehicules_2022, by=c("Accident_Id"="Num_Acc")) |>
+  left_join(lieux_2022, by=c("Accident_Id"="Num_Acc"))
+
+# Exploration des accidents par gravité
+gravite <- accidents %>% 
+  filter(!is.na(grav)) %>%
+  mutate(
+    grav = recode(
+      grav,
+      `1` = "Indemne",
+      `2` = "Blessé léger",
+      `3` = "Blessé grave",
+      `4` = "Décès"
+    )
+  ) %>% 
+  group_by(grav) %>% 
+  summarize(nombre = n()) %>% 
+  arrange(desc(nombre))
+
+# Visualisation
+ggplot(gravite, aes(x = reorder(grav, -nombre), y = nombre, fill = grav)) + 
+  geom_bar(stat = "identity") + 
+  coord_flip() + 
+  labs(
+    title = "Distribution des Accidents par Gravité",
+    x = "Gravité",
+    y = "Nombre d'Accidents",
+    fill = "Gravité"
+  ) +
+  theme_minimal()
+
 ```
-On remarque que le nombre d'accidents est plus élevé en été que durant le reste de l'année
+
+La majorité des accidents impliquent des individus qui sont **indemnes** ou qui entraînent un **décès**. Cela peut suggérer que les accidents tendent soit à être mineurs, soit extrêmement graves, avec peu de cas intermédiaires.\
+
+### Tracé du nombre d'accidents survenus au cours de l'année 2022
 
 ```{r}
 caracteristiques_2022 |>
@@ -93,32 +160,103 @@ caracteristiques_2022 |>
   #filter(mois == ")
   unite("date",an, mois, jour, sep = "-") |>
   mutate(date = as.Date(date)) |>
-  ggplot() + geom_line(mapping= aes(x=date, y=taux_augmentation)) + geom_smooth(aes(x=date, y=taux_augmentation))
+  ggplot() + geom_line(mapping= aes(x=date, y=taux_augmentation)) + geom_smooth(aes(x=date, y=taux_augmentation))  +
+  labs(
+    title = "Évolution des Accidents en 2022",
+    x = "Date",
+    y = "Nombre d'Accidents"
+  )
 ```
-Regardons maintenant la gravité de ces accidents en fonction de la luminosité de la rue à ce moment là :
+
+On remarque que le nombre d'accidents est plus élevé en été que durant le reste de l'année.
+
+### Tracé du nombre d'accidents par vitesse maximale autorisée
+
 ```{r}
+
+# Filtrer les données pour inclure uniquement les VMA entre 10 et 13
+vma_accidents_filtered <- lieux %>%
+  filter(vma >= 10 & vma <= 130) %>%
+  group_by(vma) %>%
+  summarise(Nombre_Accidents = n()) %>%
+  arrange(desc(Nombre_Accidents))
+
+# Afficher le tableau des résultats
+print(vma_accidents_filtered)
+
+# Visualiser les données avec un graphique
+ggplot(vma_accidents_filtered, aes(x = as.factor(vma), y = Nombre_Accidents)) +
+  geom_bar(stat = "identity", fill = "blue", alpha = 0.7) +
+  labs(
+    title = "Nombre d'accidents par Vitesse Maximale Autorisée (VMA) (10-13 km/h)",
+    x = "Vitesse Maximale Autorisée (VMA)",
+    y = "Nombre d'Accidents"
+  ) +
+  theme_minimal()
+
+```
+
+On voit que les accidents sont plus fréquents sur les routes avec une vitesse maximale autorisée de 50 km/h, ce qui peut être lié à une densité de trafic plus élevée sur ces routes, notamment en ville.
+
+### Tracé de la gravité des accidents en fonction de la luminosité
+
+```{r}
+
 accidents_data_plot <- caracteristiques_2022 |>
-  left_join(usagers_2022, by=c("Accident_Id"="Num_Acc")) |>
-  left_join(vehicules_2022, by=c("Accident_Id"="Num_Acc")) |>
-  filter(col==1 & motor %in% c(1,2,3)) |>
-  group_by(an, mois, jour, secu1, grav) |>
+  left_join(usagers_2022, by = c("Accident_Id" = "Num_Acc")) |>
+  left_join(vehicules_2022, by = c("Accident_Id" = "Num_Acc")) |>
+  filter(motor %in% c(1, 2, 3)) |>
+  group_by(an, mois, jour, lum, grav) |>
   summarize(
     nombre_accidents = n(),
     grav = grav,
-    secu1=secu1,
+    lum = lum,
     .groups = "drop"
   ) |>
   distinct() |>
   unite("date", an, mois, jour, sep = "-") |>
   drop_na(date) |>  # Supprime les lignes où la date est NA
   mutate(date = as.Date(date)) |>
-  filter(secu1 != -1 & grav != -1) |>
-  mutate(lum = factor(secu1)) |>
-  mutate(grav = factor(grav)) # Convertit grav en facteur
+  filter(lum != -1 & grav != -1) |>
+  mutate(
+    # Recode pour les intensités lumineuses
+    lum = factor(
+      lum, 
+      levels = c(1, 2, 3, 4, 5), 
+      labels = c("Plein jour", "Crépuscule/Aube", "Nuit avec éclairage allumé", 
+                 "Nuit avec éclairage non allumé", "Nuit sans éclairage public")
+    ),
+    # Recode pour les gravités
+    grav = factor(
+      grav, 
+      levels = c(1, 2, 3, 4),
+      labels = c("Indemne", "Blessé léger", "Blessé grave", "Décès")
+    )
+  )
 
-ggplot(accidents_data_plot, aes(x=date, y=nombre_accidents, color=grav)) + geom_line() + facet_wrap(~secu1)
+# Visualisation
+ggplot(accidents_data_plot, aes(x = date, y = nombre_accidents, color = grav)) + 
+  geom_line() +
+  labs(
+    title = "Gravité des accidents selon différentes intensités lumineuses en 2022",
+    x = "Date",
+    y = "Nombre d'Accidents",
+    color = "Gravité"
+  ) + 
+  facet_wrap(~lum) + 
+  theme_minimal()
+
+
 ```
-rue à ce moment là :
+
+-   **Plein jour** reste le moment où il y a le plus d'accidents, ce qui peut être expliqué par une densité de trafic plus importante.
+
+-   Les conditions de nuit s**ans éclairage public** et **nuit sans éclairage** sont les plus critiques en termes de gravité des accidents, probablement à cause de la faible visibilité et de conditions dangereuses.
+
+-   Les accidents au **crépuscule** et à l'**aube** présentent un risque intermédiaire.
+
+## 
+
 ```{r}
 # Par exemple, visualiser la distribution de "col" en fonction de la gravité de l'accident
 
@@ -129,7 +267,9 @@ ggplot(data_dist, aes(x = factor(col), fill = factor(grav))) +
   geom_bar() +
   labs(title = "Distribution de la gravité en fonction du code 'col'")
 ```
-# Impact de l'équipement dans les accidents de deux-roues motorisé :
+
+# 3. Analyse approfondie : impact de l'équipement dans les accidents de deux-roues motorisé :
+
 ```{r}
 data <- caracteristiques_2022 |>
   left_join(usagers_2022, by=c("Accident_Id"="Num_Acc")) |>
@@ -152,4 +292,111 @@ ggplot(data_equip, aes(x = factor(equipement), fill = factor(grav))) +
   labs(title = "Distribution de la gravité en fonction de l'équipement")
 ```
 
-On ne voit pas d'incidence claire de l'équipement sur les données. C'est nottament parce que les gants sont obligatoires en France pour les conducteurs de deux-roues motorisés. On peut donc supposer que la plupart des conducteurs portent des gants. Utilisons pour comparer des données de 2006 : 
+On ne voit pas d'incidence claire de l'équipement sur les données. C'est notamment parce que les gants sont obligatoires en France pour les conducteurs de deux-roues motorisés. On peut donc supposer que la plupart des conducteurs portent des gants.
+
+## Affichage des accidents de deux-roues sur une carte de France métropolitaine
+
+On va afficher sur une carte les accidents de deux-roues motorisés qui ont lieu sans l'équipement réglementaire (casque + gant). Pour cela on utilise la library leaflet (à installer si ce n'est pas encore le cas).
+
+```{r}
+library(leaflet)
+
+accidents_data <- caracteristiques_2022 |>
+  left_join(usagers_2022, by=c("Accident_Id"="Num_Acc")) |>
+  left_join(vehicules_2022, by=c("Accident_Id"="Num_Acc")) |>
+  filter(catv<35 & catv>=30 & catu==1) |>
+  unite("date", an, mois, jour, sep = "-") |>
+  mutate(date = as.Date(date)) |>
+  drop_na(date) |>  # Supprime les lignes où la date est NA
+  filter(lum != -1 & grav != -1) |>  # Supprime les lignes où lum ou grav est -1
+  mutate(grav = case_when(
+    grav == 1 ~ 1,
+    grav == 2 ~ 4,
+    grav == 3 ~ 3,
+    grav == 4 ~ 2,
+  )) |>
+  mutate(lum = factor(lum)) |>
+  mutate(grav = factor(grav)) |> # Convertit grav en facteur
+  mutate(lat = as.numeric(lat/10000000000),
+         long = as.numeric(long/10000000000)) |># Convertit lat et lon en numérique
+  mutate(equipement = case_when(
+    secu1 == 0 & secu2 == 0 ~ 0,
+    (secu1 == 2 & secu2 == 0) | (secu1 == 0 & secu2 == 2) ~ 1,
+    (secu1 == 2 & secu2 == 6) | (secu1 == 6 & secu2 == 2) ~ 2,
+    TRUE ~ NA_real_  # Mettre NA pour les autres cas
+  )) %>%
+  filter(!is.na(equipement)) %>%  # Supprimer les lignes avec NA dans 'equipement'
+  filter( lat >= 41.0 & lat <= 51.5,
+    long >= -5.0 & long <= 9.5) |> #On se limite à la France métropolitaine
+  select(-secu1, -secu2)  # Supprimer les colonnes 'secu1' et 'secu2'
+
+
+accidents_data_map <- accidents_data |>
+  summarize(
+    Accident_Id = Accident_Id,
+    grav = grav,
+    lum=lum,
+    date=date,
+    lat=lat,
+    long=long,
+    equipement = equipement,
+    .groups = "drop"
+  ) |>
+  distinct()
+
+#Filtrage des données
+filtered_data <- accidents_data_map |>
+  filter(equipement == 0 | equipement ==1 ) # On ne garde que les accidents sans casque ou sans gants
+
+pal <- colorFactor(
+    palette = c("green", "yellow","orange", "red"),  # Couleurs pour chaque catégorie
+    domain = accidents_data_map$grav
+  )
+
+# Affichage des accidents sur une carte
+p <- leaflet(data = filtered_data) %>%
+  addTiles() %>%  # Ajoute un fond de carte
+  addCircleMarkers(
+    ~long, ~lat,  # Coordonnées
+    color = ~pal(grav),     # Couleur en fonction de 'grav'
+    radius = 8,             # Taille des cercles
+    fillOpacity = 0.8,      # Opacité
+    popup = ~paste("Gravité:", grav)  # Info-bulle
+  ) |>
+  addLegend(
+    position = "bottomright",  # Position de la légende
+    pal = pal,  # Palette de couleurs
+    values = ~grav,  # Valeurs à afficher
+    title = "Gravité"  # Titre de la légende
+  )
+  
+p
+```
+
+On remarque que cette carte est intéressante car elle montre que les accidents sans équipement réglementaire ont majoritairement lieu dans les grandes villes de France, et sur la côte d'Azur où on observe une forte densité d'accidents. On peut supposer que cela vient nottament de deux facteurs, cette région étant particulièrement dotée en deux-roues, et a peut-être un plus grand laxisme en terme d'exigence de sécurité.
+
+# 4. Conclusion et pistes d'exploration sur le dashboard
+
+Pour notre dashboard, on va se concentrer sur les accidents ayant lieu en France métropolitaine impliquant des conducteurs de deux-roues motorisés, en analysant la gravité des accidents, les conditions environnementales, et l'impact des équipements de sécurité.
+
+Les écrans du dashboard permettent d'explorer les données sous différents angles pour identifier les tendances et les facteurs clés contribuant aux accidents de la route.
+
+### Gravité des accidents selon les conditions de luminosité
+
+-   Les accidents en pleine journée sont les plus fréquents, mais ceux survenant en conditions de faible visibilité (nuit sans éclairage public ou non allumé) tendent à être plus graves.
+
+-   Sur le dashboard, on peut observer la gravité des accidents en fonction des différentes intensités lumineuses et identifier les moments critiques à surveiller, notamment dans les conditions sans éclairage public.
+
+### Saisonnalité et pics d'accidents
+
+-   Les accidents augmentent significativement en été. Il est intéressant de visualiser la répartition des accidents selon les mois pour identifier des périodes à risque élevé, en ajustant la période sur le dashboard.
+
+### Impact des équipements de sécurité
+
+Les accidents sans casque ou sans gants ne montrent pas d'incidence claire sur la gravité, en partie à cause de la législation stricte. Cependant, il est pertinent de comparer les accidents impliquant des équipements non conformes pour vérifier les éventuelles exceptions.
+
+### Cartographie des accidents
+
+La visualisation géographique des accidents offre une compréhension spatiale des zones à haut risque. En filtrant par gravité ou équipements de sécurité, on peut identifier les points noirs où des mesures de prévention pourraient être renforcées.
+
+En conclusion, le dashboard peut être un outil puissant pour explorer les données sur les accidents de la route en France, en mettant en évidence les facteurs clés qui influent sur la sécurité routière. En utilisant ces points comme guide, il pourrait aider à orienter les efforts de sensibilisation et de prévention routière.
